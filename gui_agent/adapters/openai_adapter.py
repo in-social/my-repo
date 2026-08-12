@@ -33,34 +33,29 @@ class OpenAIAdapter:
         if not OPENAI_PKG_AVAILABLE:
             return {"ok": False, "message": "openai package not installed", "details": details}
 
-        # Attempt to query model metadata in a conservative way.
-        try:
-            # Model.retrieve is a lightweight metadata call; may raise if model unknown or key invalid.
-            info = openai.Model.retrieve(self.model_name)
-            details["model_retrieved"] = True
-            # Heuristic: if model metadata mentions vision or multimodal, flag supports_images
-            supports_images = False
-            # Some model objects include "capabilities" or "metadata" fields; be permissive
-            if isinstance(info, dict):
-                meta = info.get("metadata") or info.get("capabilities") or {}
-                txt = json.dumps(meta)
-                if "vision" in txt.lower() or "image" in txt.lower() or "multimodal" in txt.lower():
-                    supports_images = True
-            else:
-                # If it's an object, try attribute inspection
-                try:
-                    meta = getattr(info, "metadata", None)
-                    if meta:
-                        txt = json.dumps(meta)
-                        if "vision" in txt.lower() or "image" in txt.lower():
-                            supports_images = True
-                except Exception:
-                    pass
+        # Conservative preflight: do NOT call Model.retrieve (can trigger unsupported parameter errors).
+        # Only check that API key exists and openai package is importable. A deeper runtime check may be
+        # enabled by setting OPENAI_PING=true in env, which will attempt a lightweight API call.
+        details["api_key_present"] = True
+        details["openai_pkg_importable"] = True
 
-            details["supports_images_heuristic"] = supports_images
-            return {"ok": True, "message": "OpenAI preflight ok", "details": details}
-        except Exception as e:
-            return {"ok": False, "message": f"Model metadata check failed: {e}", "details": details}
+        # Optional runtime ping (disabled by default)
+        if os.environ.get("OPENAI_PING", "false").lower() in ("1", "true", "yes"):
+            try:
+                # Minimal ChatCompletion probe with no image and tiny max_tokens
+                openai.api_key = os.environ.get("OPENAI_API_KEY")
+                resp = openai.ChatCompletion.create(model=self.model_name, messages=[{"role":"system","content":"ping"}], max_tokens=1, temperature=0)
+                details["ping_ok"] = True
+            except Exception as e:
+                return {"ok": False, "message": f"OpenAI ping failed: {e}", "details": details}
+
+        # Heuristic for vision support: derive from model name or environment override
+        model_lower = (self.model_name or "").lower()
+        supports_images = False
+        if any(k in model_lower for k in ("vision", "v", "multimodal")) or os.environ.get("FORCE_OPENAI_VISION", "false").lower() in ("1","true","yes"):
+            supports_images = True
+        details["supports_images_heuristic"] = supports_images
+        return {"ok": True, "message": "OpenAI preflight ok (lightweight)", "details": details}
 
     def supports_images(self) -> bool:
         # Conservative: rely on preflight heuristic only
