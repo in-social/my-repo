@@ -1,0 +1,7 @@
+pyautogui
+pywinauto
+mss
+Pillow
+pytest
+openai  # optional, only if you plan to use OpenAIReasoner
+pytesseract  # optional if you add OCR-based heuristics
